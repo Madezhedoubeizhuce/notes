@@ -2,7 +2,7 @@
 
 https://www.rust-lang.org/zh-CN/install.html
 
-![1542445075816](E:\WorkSpace\notes\notes\软件安装\assets\1542445075816.png)
+![1542445075816](.\assets\1542445075816.png)
 
 到rust官网下载rustup-init.exe进行安装。也可以参考该页面的其他安装方法，进行离线安装，但是离线安装不包含rustup工具，建议使用rustup-init.exe安装。
 
@@ -96,6 +96,6 @@ racer complete std::io::B
 
 使用vscode打开rust文件，如果下方有如下标识，说明配置成功：
 
-![1542447669509](E:\WorkSpace\notes\notes\软件安装\assets\1542447669509.png)
+![1542447669509](.\assets\1542447669509.png)
 
 这时可以确认一下是否有代码提示及格式化等功能了。
