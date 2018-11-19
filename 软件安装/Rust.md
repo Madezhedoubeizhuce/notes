@@ -35,7 +35,7 @@ rustc --version
 
 ### 修改Rust Crates 源
 
-在 **$HOME/.cargo/config** 中添加如下内容：
+在 **$HOME/.cargo/config** 中添加如下内容（有问题，不建议设置，会导致有些包下载不成功）：
 
 ```none
 [source.crates-io]
@@ -68,6 +68,12 @@ rustup component add rls-preview rust-analysis rust-src
 
 ```shell
 cargo +nightly install racer
+```
+
+还需要安装`rustsysm`:
+
+```shell
+cargo install rustsym
 ```
 
 （可选）设置`RUST_SRC_PATH` ，建议设置该环境变量，因为设置了该环境变量能够加速，但不设置的话racer会自动检测。

@@ -9,7 +9,6 @@ strcpy(str,"nihao");
 cout<<str<<endl;
 ```
 
-
 运行结果：
 
     nihao
