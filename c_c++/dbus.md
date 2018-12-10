@@ -50,7 +50,7 @@
 
 ### bus names
 
-​	总线上的连接名称，而不是总线的名称，主要是用来标识一个应用和消息总线的连接。总线名称由一系列由点分隔的标识符组成，例如： `"com.acme.Foo"`和标识符本身可能包含字母，数字，短划线和下划线。据说该连接拥有其总线名称。
+​	总线上的连接名称，而不是总线的名称，主要是用来标识一个应用和消息总线的连接。总线名称由一系列由点分隔的标识符组成，例如： `"com.acme.Foo"`和标识符本身可能包含字母，数字，短划线和下划线。
 
 **unique connection name**
 
@@ -60,7 +60,7 @@
 
 **well-known names**
 
-​	应用可以申请一个*well-known names*，*well-known names*.必须由两个或多个以点分隔的元素组成：`"com.acme.PortableHole"`。
+​	应用可以申请一个*well-known names*，*well-known names*.必须由两个或多个以点分隔的元素组成：`"com.acme.PortableHole"`。*well-known names*能够让其他进程快速方便的找到该进程所提供的服务。
 
 ​	可以把unique connection name认为是IP地址，而well-known names是域名。
 
@@ -135,9 +135,9 @@ Object returnValue = proxy.MethodName(arg1, arg2);
 
 ​	每个对象都有多个member，接口指定了对象的所有成员。
 
-***Services***
+### Services
 
-​	服务（Services）是进程注册的抽象。进程注册某个地址后，即可获得对应总线的服务。D-Bus提供了服务查询接口，进程可通过该接口查询某个服务是否存在。或者在服务结束时自动收到来自系统的消息。
+​	服务（Services）是进程注册的抽象。进程注册某个地址后，即可获得对应总线的服务。D-Bus提供了服务查询接口，进程可通过该接口查询某个服务是否存在。或者在服务结束时自动收到来自系统的消息。使用bus name的*well-known name*给service命名。
 
 ## recap
 
