@@ -1,23 +1,46 @@
 # Introduction to D-Bus
 
-​	D-Bus是一个进程间通信系统。
+​	DBus是一种IPC机制，由freedesktop.org项目提供，使用GPL许可证发行，用于进程间通信或进程与内核的通信。
 
-​	D-Bus是有状态的和基于连接的，比类似UDP的底层协议更智能。它将消息作为离散数据进行传输，而不是像TCP一样传输连续的数据流。D-Bus支持一对一消息传递和发布/订阅通信。
+​	DBus进程间通信主要有三层架构：
 
-​	D-Bus传输结构化的数据，并且以二进制形式处理数据，能够处理各种整型、浮点型数字，字符串及复合类型等。因为D-Bus传输的数据不是原始字节数据，因此可以验证消息、拒绝错误的消息。
+1. 底层接口层：主要是通过libdbus这个函数库，给予系统使用DBus的能力。 
+2. 总线层：主要Message bus daemon这个总线守护进程提供的，在Linux系统启动时运行，负责进程间的消息路由和传递，其中包括Linux内核和Linux桌面环境的消息传递。总线守护进程可同时与多个应用程序相连，并能把来自一个应用程序的消息路由到0或者多个其他程序。 
+3. 应用封装层：通过一系列基于特定应用程序框架将DBus的底层接口封装成友好的Wrapper库，供不同开发人员使用（DBus官方主页http://www.freedesktop.org/wiki/Software/dbus，提供了大部分编程语言的DBus库版本）。比如libdbus-glib, libdbus-python.	
+
+## Overview picture
+
+![](.\assets\diagram.png)
+
+​	如上图所示，Bus Daemon Process是运行在linux系统中的一个后台守护进程，dbus-daemon运行时会调用libdus的库。Application Process1代表的就是应用程序进程，通过调用特定的应用程序框架的Wrapper库与dbus-daemon进行通信。
+从上图也可以看出来Application和Daemon中其实还是通过socket进行通行。
+
+​	DBus的三大优点：低延迟，低开销，高可用性。
+
+- 低延迟：DBus一开始就是用来设计成避免来回传递和允许异步操作的。因此虽然在Application和Daemon之间是通过socket实现的，但是又去掉了socket的循环等待，保证了操作的实时高效。
+- *低开销：DBus使用一个二进制的协议，不需要转化成像XML这样的文本格式。因为DBus是主要用来机器内部的IPC,而不是为了网络上的IPC机制而准备的.所以它才能够在本机内部达到最优效果。*
+- 高可用性：DBus是基于消息机制而不是字节流机制。它能自动管理一大堆困难的IPC问题。同样的，DBus库被设计来让程序员能够使用他们已经写好的代码。而不会让他们放弃已经写好的代码，被迫通过学习新的IPC机制来根据新的IPC特性重写这些代码。
 
 ## Buses
 
-​	D-Bus有两个主要组件：
+### dbus-daemon
 
-1. 点对点通信库，可以被任意两个进程使用，以便在它们之间进行通信。
+​	dbus-daemon是D-Bus消息总线守护进程(message bus daemon)。不同的进程通过连接到message bus daemon来进行通信。
 
-2. 一个`dbusdaemon`，即守护进程。
+​	有两种标准的消息总线：会话总线（Session Buses/per-user-login-session message bus）和系统总线（System Bus/systemwide message bus）。
+
+#### 会话总线（Session Buses）
+
+​	普通进程创建，可同时存在多条。会话总线属于某个进程私有，它用于进程间传递消息。
+
+#### 系统总线（System Bus）
+
+​	在引导时就会启动，它由操作系统和后台进程使用，安全性非常好，以使得任意的应用程序不能欺骗系统事件。其主要用于广播系统事件，例如更改打印机队列或添加/删除设备。当然，如果一个应用程序需要接受来自系统总线的消息，他也可以直接连接到系统总线中，但是他能发送的消息是受限的。
 
 
 ### Addresses
 
-​	应用程序使用D-Bus时， 通常是作为客户端或者服务端。
+​	应用程序使用D-Bus时， 通常是作为客户端或者服务端。Addresses指明server将要监听的地方，client将要连接的地方
 
 ​	总线地址通常是Unix域套接字的文件名，例如`"/tmp/.hiddensocket"`。
 
@@ -25,13 +48,9 @@
 
 ​	你可以选择使用bus daemon或者不使用，如果使用bus daemon，你的应用将于bus daemon进行通信。如果不使用bus daemon，你需要自己设置作为服务端的应用，并且需要让客户端获取到正确的服务端地址，此时，客户端和服务端直接通信，不需要通过bus daemon，但是这不常用。
 
-### Configuration and Startup
-
-​	总线守护进程使用`dbus-launch`命令启动，使用选项`--config-file`选项来指示描述正在启动的总线的配置文件。标准总线将`/etc/dbus-1/system.conf`和`/etc/dbus-1/session.conf`作为各自的配置文件。
-
 ### bus names
 
-​	总线上的连接名称，而不是总线的名称。总线名称由一系列由点分隔的标识符组成，例如： `"com.acme.Foo"`和标识符本身可能包含字母，数字，短划线和下划线。据说该连接拥有其总线名称。
+​	总线上的连接名称，而不是总线的名称，主要是用来标识一个应用和消息总线的连接。总线名称由一系列由点分隔的标识符组成，例如： `"com.acme.Foo"`和标识符本身可能包含字母，数字，短划线和下划线。据说该连接拥有其总线名称。
 
 **unique connection name**
 
@@ -110,11 +129,15 @@ Object returnValue = proxy.MethodName(arg1, arg2);
 
 ***members***
 
-​	对象上支持的方法及可能发射的信号都称为members。
+​	对象上的方法及可能发射的信号都称为该对象的member。
 
 ***interfaces***
 
-​	接口指定了所有的对象成员。
+​	每个对象都有多个member，接口指定了对象的所有成员。
+
+***Services***
+
+​	服务（Services）是进程注册的抽象。进程注册某个地址后，即可获得对应总线的服务。D-Bus提供了服务查询接口，进程可通过该接口查询某个服务是否存在。或者在服务结束时自动收到来自系统的消息。
 
 ## recap
 
@@ -177,7 +200,3 @@ bus daemon 不会打乱消息的顺序。也就是说，如果你发送多个met
 - 任何进程都可以注册`"match ruls"`（通常包括发送者和信号名称）来指示它所感兴趣的信号。
 - bus daemon检查信号并找出对此信号感兴趣的进程，然后将该信号发送给这些进程。
 - 收到信号的进程决定处理方式。
-
-### Overview picture
-
-![](.\assets\diagram.png)
