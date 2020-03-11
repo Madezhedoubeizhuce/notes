@@ -18,3 +18,17 @@ keytool -list -v -keystore mykey.keystore
 第三步使用platform.p12 生成了mykey.keystore 文件，keystore密码是password
 
 第四步，查看签名文件信息
+
+
+
+#### 1.`openssl pkcs8 -in platform.pk8 -inform DER -outform PEM -out shared.priv.pem -nocrypt`
+
+#### 2`openssl pkcs12 -export -in platform.x509.pem -inkey shared.priv.pem -out shared.pk12 -name testalias`
+
+其中testalias为keyAlias
+
+#### 3.`keytool -importkeystore -deststorepass android -destkeypass android -destkeystore source.keystore -srckeystore shared.pk12 -srcstoretype PKCS12 -srcstorepass android -alias keyAlias`
+
+生成的source.keystore即为所需要的keystore文件，storePassword和keyPassword为android
+gradle配置：
+
