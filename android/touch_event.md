@@ -619,3 +619,5 @@ public boolean onTouchEvent(MotionEvent event) {
 ```
 
 这里是对ACTION_UP、ACTION_DOWN、ACTION_CANCEL和ACTION_MOVE事件的处理，主要就是在ACTION_UP事件时调用performClick触发点击事件，在ACTION_DOWN事件时调用checkForLongClick方法根据具体方法触发长按事件，这里就不详细介绍了。
+
+对事件分发的知识到这里就介绍完了，这里只是主要分析了事件分发相关的代码，如果想要了解更多，可以自己去看源码。
