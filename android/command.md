@@ -31,3 +31,9 @@ dumpsys meminfo
 dumpsys meminfo $package_name or $pid
 ```
 
+查看签名文件信息：
+
+```shell
+keytool -list -v -keystore debug.keystore
+```
+
