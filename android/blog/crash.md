@@ -429,3 +429,138 @@ DALVIK THREADS (45):
 可以看出，首先显示的是应用的一些基本信息，这部分可以不用重点关注，需要重点关注的是接下去各线程在发生ANR时的线程堆栈信息。例子中的main线程在anr是运行的堆栈是org.greenrobot.greendao.AbstractDao.deleteByKey，这里看起来像是因为在删除数据库时发生了阻塞，这就需要继续到看堆栈的下层函数，可以发现是com.reconova.visitor.b.b.b.a.a(:-1)，这表明app进行过混淆，需要在build/outputs/mapping文件夹下找到mapping文件进行对应的分析了。可能在这里找到了对应的代码也不一定能够找出产生ANR的原因，那就需要在观察其他线程的堆栈以及进行代码分析来寻找anr原因。
 
 当然了，简单的ANR是比较容易定位的，只要找到堆栈信息就可以直接定位到具体原因了，而复杂的anr问题就需要从多方面进行分析。 
+
+## native崩溃
+
+一般在发生java层崩溃时，都比较好定位问题，很快就能找到解决方案，但是在发生native崩溃时就比较棘手了。
+
+那么在发生native崩溃时有哪些方法来定位问题呢？
+
+### tombstone
+
+一种是利用Android生成的tombstone文件来获取崩溃时的堆栈信息，从而进行分析，那么下面来介绍一下tombstone分析native崩溃。
+
+下面是tombstone文件的崩溃信息：
+
+```
+*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
+Build fingerprint: 'Android/rk3288_box/rk3288_box:5.1.1/LMY49F/ty05151933:userdebug/test-keys'
+Revision: '0'
+ABI: 'arm'
+pid: 3459, tid: 3477, name: pool-1-thread-1  >>> com.reconova.visitor <<<
+signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0xdeadbaad
+Abort message: 'invalid address or address of corrupt block 0x20 passed to dlfree'
+    r0 00000000  r1 a25efef0  r2 deadbaad  r3 00000000
+    r4 00000020  r5 b6df20e8  r6 9bfec000  r7 00000028
+    r8 00000000  r9 a25f03b4  sl a25f03b0  fp b80ab000
+    ip b6dec64c  sp a25f02e8  lr b6dc0f53  pc b6dc0f54  cpsr 60070030
+    d0  0000000000000000  d1  0000000000000000
+    d2  6f20737365726466  d3  707572726f632072
+    d4  7374657373612f73  d5  65646f6d5f77722f
+    d6  4d2f3332312f736c  d7  6d2f2f736c65646f
+    d8  0000000000000000  d9  0000000000000000
+    d10 0000000000000000  d11 0000000000000000
+    d12 0000000000000000  d13 0000000000000000
+    d14 0000000000000000  d15 0000000000000000
+    d16 0000000000000000  d17 0000000000000fff
+    d18 bb030f493ac97969  d19 3d3a30c6bac2b209
+    d20 3a3e3cdd3b47a9c0  d21 3d3a30c63ab1edd7
+    d22 3c75a986bdb7df6f  d23 3a0540b23b9a3464
+    d24 be638e39be638e39  d25 be638e39be638e39
+    d26 3cb60b613cb60b61  d27 3cb60b613cb60b61
+    d28 3c360b613c360b61  d29 3c360b613c360b61
+    d30 bcb60b61bcb60b61  d31 bcb60b61bcb60b61
+    scr 20000011
+
+backtrace:
+    #00 pc 0002bf54  /system/lib/libc.so (dlfree+1239)
+    #01 pc 00012257  /system/lib/libc.so (free+10)
+    #02 pc 001f07d9  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so
+    #03 pc 001e7968  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so
+    #04 pc 0002433c  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so
+    #05 pc 0001d5bc  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so
+    #06 pc 0002a5e8  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so
+    #07 pc 00026690  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so
+    #08 pc 0002263c  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so
+    #09 pc 00021a7c  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so
+    #10 pc 0002ed18  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so (Java_com_reconova_java_RecoFaceEx_initModule+136)
+    #11 pc 00412e45  /data/dalvik-cache/arm/data@app@com.reconova.visitor-1@base.apk@classes.dex
+
+stack:
+         a25f02a8  0000006b  
+         a25f02ac  f542ff37  
+         a25f02b0  00000000  
+         a25f02b4  00000020  
+         a25f02b8  b6df20e8  
+         a25f02bc  9bfec000  [anon:libc_malloc]
+         a25f02c0  00000028  
+         a25f02c4  b6daa481  /system/lib/libc.so (__libc_fatal_no_abort+16)
+         a25f02c8  b6de27de  /system/lib/libc.so
+         a25f02cc  a25f02dc  [stack:3477]
+         a25f02d0  b6de5ffe  /system/lib/libc.so
+         a25f02d4  b6dc0f53  /system/lib/libc.so (dlfree+1238)
+         a25f02d8  b6de27de  /system/lib/libc.so
+         a25f02dc  00000020  
+         a25f02e0  b6de5ffe  /system/lib/libc.so
+......
+```
+
+`pid: 3459, tid: 3477, name: pool-1-thread-1  >>> com.reconova.visitor <<<`
+
+在文件开头，记录了崩溃锦成相关的信息，包括进程号（pid），崩溃线程id（tid）、线程名以及进程名。
+
+接下去记录了崩溃的一些信息：
+
+`signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0xdeadbaad`
+
+包括signal类型、以及崩溃的地址信息以及一些寄存器的信息。对于应用开发者来说，直接拿到这些信息可能不会有直接的帮助，因此我们需要继续往下分析。
+
+```
+backtrace:
+    #00 pc 0002bf54  /system/lib/libc.so (dlfree+1239)
+    #01 pc 00012257  /system/lib/libc.so (free+10)
+    #02 pc 001f07d9  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so
+    #03 pc 001e7968  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so
+    #04 pc 0002433c  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so
+    #05 pc 0001d5bc  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so
+    #06 pc 0002a5e8  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so
+    #07 pc 00026690  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so
+    #08 pc 0002263c  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so
+    #09 pc 00021a7c  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so
+    #10 pc 0002ed18  /data/app/com.reconova.visitor-1/lib/arm/libRWFaceSDK.so (Java_com_reconova_java_RecoFaceEx_initModule+136)
+```
+
+这里打印了崩溃的堆栈，很多情况下，再这里就能直接找到崩溃的so库以及堆栈信息了。其中下面的表示在栈顶，也就是说离我们调用的方法越近，因此我们需要从底部往上去寻找我们熟悉的so库以及函数信息。
+
+在这里，我们的应用使用了libRWFaceSDK.so这个库，因此我们要找到这个库的堆栈信息，这里直接打印出来的方法是Java_com_reconova_java_RecoFaceEx_initModule方法，在这里还不能直接定位，需要继续往上找。但是上面的都没有函数信息，这样就需要从第三列中获取出问题的地址来分析了。这里我们去libRWFaceSDK.so最底层的地址来分析，也就是第四行的001f07d9。
+
+拿到这个地址之后，我们需要借助工具来继续定位，有一下几种选择，
+
+**1、addr2line**，将崩溃的地址作为参数输入，可以找到对应的源代码信息
+
+```powershell
+D:\DJ_Software\Android\Ndk_Download\android-ndk-r10e-windows-x86_64\android-ndk-r10e\toolchains\arm-linux-androideabi-4.8\prebuilt\windows-x86_64\bin>arm-linux-androideabi-addr2line -f -e D:\flash_anr_pc\libipcsdk.so 00023d6f
+
+LoopBuffWrite
+??:?
+```
+
+这里需要注意的是，这里使用的so库需要是没有strip过的，因为strip过的so库，是查不到代码信息的，的出来的只有一对？号
+
+**2、objdump**，将so库进行反编译，可以根据偏移地址得到更详细的函数调用上下文
+
+```powershell
+D:\DJ_Software\Android\Ndk_Download\android-ndk-r10e-windows-x86_64\android-ndk-r10e\toolchains\arm-linux-androideabi-4.8\prebuilt\windows-x86_64\arm-linux-androideabi\bin>objdump -S -D D:\flash_anr_pc\libipcsdk.so > D:\flash_anr_pc\deassmble_libipc.log
+```
+
+反汇编后可以直接在反汇编的文件中寻找偏移地址，进行上下文的分析，不过这样的分析需要身后的功底才好进行分析，这里其实也没有具体这样分析过，也没办法说的详细了。
+
+### Google Breakpad
+
+还可以用谷歌的breakpad框架进行分析，这里推荐一篇博客：
+
+https://www.jianshu.com/p/295ebf42b05b
+
+## 其他处理方式
+
+当然了，在发生崩溃的时候往往是在用户手机或者客户现场的各种Android设备上发生的，上面说的都是开发测试过程中可以使用的手段，放到正式环境中就可能效率比较低了，因此我们可以继承一些第三方，如腾讯的bugly之类的异常处理工具。
