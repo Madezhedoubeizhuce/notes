@@ -28,13 +28,11 @@ class FilterAdapter(data: List<FilterItem>) :
 
 ## 核心实现
 
-BaseQuickAdapter是这个框架的核心类，其他的多布局等adapter也都是继承自这个类的，包含创建绑定ViewHolder，添加header、footer，设置动画等逻辑。在分析BaseQuickAdapter工作流程之前，需要先介绍一下ViewHolder类。
+RecyclerView的adapter都是通过ViewHolder来复用item布局的，此库提供了一个BaseViewHolder基类，他继承自RecyclerView.ViewHolder，BaseViewHolder提供了一些常用的方法。这里先来看一下BaseViewHolder：
 
 ### BaseViewHolder
 
-BaseViewHolder是ViewHolder的基类，提供了一些基本操控item中child view的方法，比如设置文字内容、设置图片或背景等。
-
-```java
+```kotlin
 import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
 import android.util.SparseArray
@@ -156,15 +154,197 @@ open class BaseViewHolder(view: View) : RecyclerView.ViewHolder(view) {
 }
 ```
 
-可以看出，BaseViewHolder提供了getView、getViewOrNull两个方法根据id获取item中的子view，提供了一系列set方法，用以设置子view的属性。
+BaseViewHolder提供了getView、getViewOrNull两个方法根据id获取item中的子view，setText方法用于设置TextView的内容，setTextColor用于设置文本框字体颜色，setImageResource、setImageDrawable、setImageBitmap用于设置ImageView图片，setBackgroundColor、setBackgroundResource用于设置View的背景，setVisible、setGone设置View的显示及隐藏，setEnabled用于启用或禁用View。
+
+这些都是一般情况下比较常用作列表item项的布局的，如果有更复杂的布局需要，可以自定义VIewHolder继承BaseViewHolder进行扩展。
 
 ### ViewHolder创建
 
+在使用RecycleView时，都要继承RecyclerView.Adapter来实现item项的显示，而在实现RecyclerView.Adapter时，必须重写onCreateViewHolder()、onBindViewHolder()和getItemCount()这三个方法。onCreateViewHolder方法用于创建ViewHolder实例，onBindViewHolder用来更新RecyclerView的item的数据内容，会在每个item被滚动到屏幕内的时候被回调。此adapter库提供了一个BaseQuickAdapter类，可以通过继承此adapter快速使用RecycleView。
 
+BaseQuickAdapter是这个adapter库的核心类，它继承RecyclerView.Adapter，实现了这个库的核心功能，包括创建、绑定ViewHolder，item点击事件监听，添加header、footer，设置动画等功能。此库中所有的adapter都继承于BaseQuickAdapter。
 
-### 数据展示
+首先，分析一下BaseQuickAdapter中ViewHolder的创建流程：
+
+```kotlin
+override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+        val baseViewHolder: VH
+        when (viewType) {
+            LOAD_MORE_VIEW -> {
+                val view = mLoadMoreModule!!.loadMoreView.getRootView(parent)
+                baseViewHolder = createBaseViewHolder(view)
+                mLoadMoreModule!!.setupViewHolder(baseViewHolder)
+            }
+            HEADER_VIEW -> {
+                val headerLayoutVp: ViewParent? = mHeaderLayout.parent
+                if (headerLayoutVp is ViewGroup) {
+                    headerLayoutVp.removeView(mHeaderLayout)
+                }
+
+                baseViewHolder = createBaseViewHolder(mHeaderLayout)
+            }
+            EMPTY_VIEW -> {
+                val emptyLayoutVp: ViewParent? = mEmptyLayout.parent
+                if (emptyLayoutVp is ViewGroup) {
+                    emptyLayoutVp.removeView(mEmptyLayout)
+                }
+
+                baseViewHolder = createBaseViewHolder(mEmptyLayout)
+            }
+            FOOTER_VIEW -> {
+                val footerLayoutVp: ViewParent? = mFooterLayout.parent
+                if (footerLayoutVp is ViewGroup) {
+                    footerLayoutVp.removeView(mFooterLayout)
+                }
+
+                baseViewHolder = createBaseViewHolder(mFooterLayout)
+            }
+            else -> {
+                val viewHolder = onCreateDefViewHolder(parent, viewType)
+                bindViewClickListener(viewHolder, viewType)
+                mDraggableModule?.initView(viewHolder)
+                onItemViewHolderCreated(viewHolder, viewType)
+                baseViewHolder = viewHolder
+            }
+        }
+
+        return baseViewHolder
+    }
+```
+
+onCreateViewHolder中又多重分支，每个分支都代表不同类型的item布局，这里暂时先不分析其他类型的item，直接把焦点放到else分支上。
+
+else分支第一行就调用了onCreateDefViewHolder(parent, viewType)方法，可以看出是这个方法创建了对应的viewHolder，那么来看下他的实现：
+
+```kotlin
+/**
+     * Override this method and return your ViewHolder.
+     * 重写此方法，返回你的ViewHolder。
+     */
+protected open fun onCreateDefViewHolder(parent: ViewGroup, viewType: Int): VH {
+    return createBaseViewHolder(parent, layoutResId)
+}
+```
+
+这里可以在自己的adapter中重写此方法创建自定义的ViewHolder，默认调用了createBaseViewHolder(parent, layoutResId)方法来创建默认的ViewHolder，这里来看下默认的实现：
+
+```kotlin
+protected open fun createBaseViewHolder(parent: ViewGroup, 
+                                        @LayoutRes layoutResId: Int): VH {
+    return createBaseViewHolder(parent.getItemView(layoutResId))
+}
+```
+
+这里通过parent.getItemView(layoutResId)来创建item的布局，这里是通过kotlin的扩展函数给ViewGroup添加了一个getItemView的扩展函数：
+
+```kotlin
+/**
+ * 扩展方法，用于获取View
+ * @receiver ViewGroup parent
+ * @param layoutResId Int
+ * @return View
+ */
+fun ViewGroup.getItemView(@LayoutRes layoutResId: Int): View {
+    return LayoutInflater.from(this.context).inflate(layoutResId, this, false)
+}
+```
+
+这里就是通过inflater创建item的view实例。
+
+再回到createBaseViewHolder(parent, layoutResId)方法中，它内部又通过createBaseViewHolder(view: View)创建ViewHolder实例：
+
+```kotlin
+protected open fun createBaseViewHolder(view: View): VH {
+    var temp: Class<*>? = javaClass
+    var z: Class<*>? = null
+    while (z == null && null != temp) {
+        z = getInstancedGenericKClass(temp)
+        temp = temp.superclass
+    }
+    // 泛型擦除会导致z为null
+    val vh: VH? = if (z == null) {
+        BaseViewHolder(view) as VH
+    } else {
+        createBaseGenericKInstance(z, view)
+    }
+    return vh ?: BaseViewHolder(view) as VH
+}
+
+/**
+  * get generic parameter VH
+  *
+  * @param z
+  * @return
+  */
+private fun getInstancedGenericKClass(z: Class<*>): Class<*>? {
+    try {
+        val type = z.genericSuperclass
+        if (type is ParameterizedType) {
+            val types = type.actualTypeArguments
+            for (temp in types) {
+                if (temp is Class<*>) {
+                    if (BaseViewHolder::class.java.isAssignableFrom(temp)) {
+                        return temp
+                    }
+                } else if (temp is ParameterizedType) {
+                    val rawType = temp.rawType
+                    if (rawType is Class<*> && 
+                        	BaseViewHolder::class.java.isAssignableFrom(rawType)) {
+                        return rawType
+                    }
+                }
+            }
+        }
+    } catch (e: java.lang.reflect.GenericSignatureFormatError) {
+        e.printStackTrace()
+    } catch (e: TypeNotPresentException) {
+        e.printStackTrace()
+    } catch (e: java.lang.reflect.MalformedParameterizedTypeException) {
+        e.printStackTrace()
+    }
+    return null
+}
+
+/**
+  * try to create Generic VH instance
+  *
+  * @param z
+  * @param view
+  * @return
+  */
+@Suppress("UNCHECKED_CAST")
+private fun createBaseGenericKInstance(z: Class<*>, view: View): VH? {
+    try {
+        val constructor: Constructor<*>
+        // inner and unstatic class
+        return if (z.isMemberClass && !Modifier.isStatic(z.modifiers)) {
+            constructor = z.getDeclaredConstructor(javaClass, View::class.java)
+            constructor.isAccessible = true
+            constructor.newInstance(this, view) as VH
+        } else {
+            constructor = z.getDeclaredConstructor(View::class.java)
+            constructor.isAccessible = true
+            constructor.newInstance(view) as VH
+        }
+    } catch (e: NoSuchMethodException) {
+        e.printStackTrace()
+    } catch (e: IllegalAccessException) {
+        e.printStackTrace()
+    } catch (e: InstantiationException) {
+        e.printStackTrace()
+    } catch (e: InvocationTargetException) {
+        e.printStackTrace()
+    }
+
+    return null
+}
+```
+
+getInstancedGenericKClass()方法先通过反射获得子adapter中的泛型参数列表，然后找到类型为BaseViewHolder子类的Class对象并将其返回。如果因为泛型擦除而获取不到BaseViewHolder的Class对象，直接创建BaseViewHolder，否则通过反射创建对应ViewHolder 的实例。
 
 ### 点击事件绑定
+
+### 数据展示
 
 ### 动画实现
 
