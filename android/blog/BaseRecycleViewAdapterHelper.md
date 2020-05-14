@@ -344,6 +344,89 @@ getInstancedGenericKClass()方法先通过反射获得子adapter中的泛型参�
 
 ### 点击事件绑定
 
+RecyclerView没有ListView默认的item点击事件监听，一般都要自己在adapter中添加，BaseQuickAdapter类提供了OnItemClickListener、OnItemLongClickListener、OnItemChildClickListener以及OnItemChildLongClickListener，用来监听RecyclerView每个item及内部child的点击事件，先来看下基本的使用：
+
+```kotlin
+public class ItemClickAdapter extends BaseMultiItemQuickAdapter<ClickEntity, BaseViewHolder> implements OnItemClickListener, OnItemChildClickListener {
+
+    public ItemClickAdapter(List<ClickEntity> data) {
+        super(data);
+        ......
+
+        addChildClickViewIds(R.id.btn,
+                R.id.iv_num_reduce, R.id.iv_num_add,
+                R.id.item_click);
+
+        addChildLongClickViewIds(R.id.iv_num_reduce, R.id.iv_num_add,
+                R.id.btn);
+    }
+
+
+    @Override
+    protected void convert(@NonNull final BaseViewHolder helper, 
+                           final ClickEntity item) {
+        ......
+    }
+}
+
+adapter.setOnItemClickListener(new OnItemClickListener() {
+    @Override
+    public void onItemClick(@NonNull BaseQuickAdapter<?, ?> adapter, 
+                            @NonNull View view, int position) {
+        Tips.show("onItemClick " + position);
+    }
+});
+adapter.setOnItemLongClickListener(new OnItemLongClickListener() {
+    @Override
+    public boolean onItemLongClick(@NonNull BaseQuickAdapter adapter, 
+                                   @NonNull View view, int position) {
+        Tips.show("onItemLongClick " + position);
+        return true;
+    }
+});
+adapter.setOnItemChildClickListener(new OnItemChildClickListener() {
+    @Override
+    public void onItemChildClick(@NonNull BaseQuickAdapter adapter, 
+                                 @NonNull View view, int position) {
+        Tips.show("onItemChildClick " + position);
+    }
+});
+adapter.setOnItemChildLongClickListener(new OnItemChildLongClickListener() {
+    @Override
+    public boolean onItemChildLongClick(@NonNull BaseQuickAdapter adapter, 
+                                        @NonNull View view, int position) {
+        Tips.show("onItemChildLongClick " + position);
+        return true;
+    }
+});
+```
+
+可以看出，在设置item的点击监听时，直接调用adapter.setOnItemClickListener()及adapter.setOnItemLongClickListener()方法即可实现监听。但是在设置item中具体子view监听时，则需要先调用adapter的addChildClickViewIds()或addChildLongClickViewIds()方法将要添加点击事件对应view的ID添加到adapter中，然后调用setOnItemChildClickListener、setOnItemChildLongClickListener添加对应的监听。
+
+需要注意的一点是，addChildClickViewIds和addChildLongClickViewIds两个方法不能在convert方法中调用，在convert中调用，点击事件不会生效，详细原因接下来的分析中就会讲到。
+
+在初步介绍了如何添加click监听之后，就要开始分析BaseQuickAdapter如何实现的item监听，这里先回到BaseQuickAdapter的onCreateViewHolder方法中：
+
+```kotlin
+override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+        val baseViewHolder: VH
+        when (viewType) {
+            ......
+            else -> {
+                val viewHolder = onCreateDefViewHolder(parent, viewType)
+                bindViewClickListener(viewHolder, viewType)
+                mDraggableModule?.initView(viewHolder)
+                onItemViewHolderCreated(viewHolder, viewType)
+                baseViewHolder = viewHolder
+            }
+        }
+
+        return baseViewHolder
+    }
+```
+
+可以看到这里
+
 ### 数据展示
 
 ### 动画实现
