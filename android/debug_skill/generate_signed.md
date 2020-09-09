@@ -1,34 +1,52 @@
-# 使用.pk8 和.pem签名生成.keystore 签名
+# adb
 
-将 platform.pk8 和 platform.x509.pem 格式的系统签名转换为 mykey.keystore 格式
-
-需要系统中有openssl 和 jdk，windows 版openssl 可以在http://slproweb.com/products/Win32OpenSSL.html下载
+将logcat命令重定向到本地：
 
 ```shell
-openssl pkcs8 -inform DER -nocrypt -in platform.pk8 -out key.pem
-openssl pkcs12 -export -in platform.x509.pem -inkey key.pem -out platform.p12 -password pass:android -name mykey
-keytool -importkeystore -deststorepass password -destkeystore mykey.keystore -srckeystore platform.p12 -srcstoretype  PKCS12 -srcstorepass android
-keytool -list -v -keystore mykey.keystore
+adb logcat -v time > 1.txt
 ```
 
-第一步使用platform.pk8生成了key.pem 文件
+获取屏幕分辨率：
 
-第二步使用platform.x509.pem 和key.pem 生成了platform.p12 文件，其中签名的名字是mykey，密码是android
+```shell
+adb shell dumpsys window displays
+```
 
-第三步使用platform.p12 生成了mykey.keystore 文件，keystore密码是password
+获取当前activity
 
-第四步，查看签名文件信息
+```shell
+dumpsys activity activities
+```
 
+获取内存
 
+```shell
+cat /proc/meminfo
+dumpsys meminfo
+```
 
-#### 1.`openssl pkcs8 -in platform.pk8 -inform DER -outform PEM -out shared.priv.pem -nocrypt`
+获取应用内存信息
 
-#### 2`openssl pkcs12 -export -in platform.x509.pem -inkey shared.priv.pem -out shared.pk12 -name testalias`
+```shell
+dumpsys meminfo $package_name or $pid
+```
 
-其中testalias为keyAlias
+查看签名文件信息：
 
-#### 3.`keytool -importkeystore -deststorepass android -destkeypass android -destkeystore source.keystore -srckeystore shared.pk12 -srcstoretype PKCS12 -srcstorepass android -alias keyAlias`
+```shell
+keytool -list -v -keystore debug.keystore
+```
 
-生成的source.keystore即为所需要的keystore文件，storePassword和keyPassword为android
-gradle配置：
+# 查看apk的签名信息
 
+1. 将apk解压；
+
+2. 找到META-INF 下的.RSA文件；
+
+3. 进入cmd环境，进入.RSA文件文件所在路径，命令：
+
+   ```
+   keytool -printcert -file XXX.RSA
+   ```
+
+   即可查看签名信息
