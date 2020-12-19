@@ -271,4 +271,96 @@ f0 01
 | 2147483647      | 4294967294 |
 | -2147483648     | 4294967295 |
 
-将有符号整数经过**ZIgZag编码**之后就可以使用Base 128 Varints编码进行处理了。
+将有符号整数经过**ZigZag编码**之后就可以使用Base 128 Varints编码进行处理了。
+
+#### Non-varint数字
+
+Non-varint数字就是fixed64, sfixed64, double和fixed32, sfixed32, float类型的数字，他们的编码后的value就是个原始的二进制编码，其中fixed64, sfixed64, double长度为64位，fixed32, sfixed32, float长度为32位。
+
+我们再Test中新增一个size字段，表示double类型：
+
+```protobuf
+message Test {
+  string msg = 1;
+  int32 num = 2;
+  int32 page = 3;
+  double size = 4;
+}
+```
+
+设置size值为34：得到size字段对应的二进制编码为：
+
+```
+21 00 00 00 00 00 00 41 40  
+```
+
+#### 内嵌类型
+
+内嵌消息的编码规则和string类型的编码规则是相同的，我们定义Test2:
+
+```protobuf
+message Test2 {
+  Test test = 1;
+}
+```
+
+使用如下代码保存其生成的二进制数据：
+
+```kotlin
+val testMsg = ProtoTest.Test.newBuilder()
+.setMsg(
+    "12345678"
+)
+.setNum(240)
+.setPage(2)
+.build()
+val test2Msg = ProtoTest.Test2.newBuilder()
+.setTest(testMsg)
+.build()
+val file = File("./test/ProtoTest2.bin")
+if (file.parentFile?.exists() == false) {
+    file.parentFile?.mkdirs()
+}
+val os = FileOutputStream(file)
+test2Msg.writeTo(os)
+```
+
+得到如下数据：
+
+```
+0A 0F 0A 08 31 32 33 34 35 36 37 38 10 F0 01 18 02
+```
+
+可以看到，除了开头的0A 0F，后面的数据与之前的例子生成的数据是完全一致的。开头的0A和0F的计算方式和前面介绍string类型是一样的，这里就不再赘述了。
+
+#### repeat类型
+
+在proto2中，没有显式声明**[packed=true]**的repeat元素，其编码后的数据包含0个或多个相同key的key-value对，但是它们不一定是连续的，可能会交错分布在其他字段中，但是元素的顺序是有保证的。在proto3中，只用packed编码：
+
+packed编码将所有的元素打包到一个单独的key-value对中，并且key的wire-type为2（key编码规则表），并且将每个元素按照它们的编码方式进行编码。在proto2中，需要在使用packed编码的字段后加上**[packed=true]**，在proto3中数值类型自动使用packed编码（？经试验默认并不是packed编码，而是连续的键值对，每个键都相同）。
+
+假设定义如下message：
+
+```protobuf
+message Test2 {
+  repeated int32 id = 2[packed = true];
+}
+```
+
+那么他编码后的数据为：
+
+```
+12 04 01 02 03 04
+```
+
+可以看出，这和string类型的编码方式相同。
+
+#### optional类型
+
+proto3中的非repeat字段或者proto2中的optional类型字段可能有0个或者1个键值对。
+
+在编码后的消息体重，可能出现多个重复的字段。如果是数值或者string类型，当出现多个相同的字段时，解析的时候应该使用最后出现的哪个字段。而对于内嵌类型，则需要把多个相同字段的值合并起来，类似MergeFrom方法，将多个对象种不同的属性合并。
+
+#### 字段顺序
+
+protobuf不能保证序列化时的字段顺序，因此两次序列化后的二进制数据可能不相同。
