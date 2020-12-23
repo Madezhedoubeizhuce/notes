@@ -1,11 +1,5 @@
 # Android中使用Log4j及配置说明
 
-2016-06-03 09:09:00   更多
-
-
-
-版权声明：本文为博主原创文章，遵循[ CC 4.0 BY-SA ](http://creativecommons.org/licenses/by-sa/4.0/)版权协议，转载请附上原文出处链接和本声明。本文链接：https://blog.csdn.net/zjclugger/article/details/51576156
-
 目前在进行Android开发时使用到了log4j，现在对其配置进行记录。
 
 1. android-logging-log4j 下载地址
@@ -15,8 +9,6 @@ https://code.google.com/archive/p/android-logging-log4j/
 2. 所依赖的apache的log4j库的下载地址
 
 http://logging.apache.org/log4j/1.2/download.html
-
-
 
 Log4j配置说明
 
@@ -30,20 +22,16 @@ Log4j配置说明
 ​            例如，设置某个Logger组件的级别是WARN，那么则只有级别比WARN高的日志信息才能输出，即DEBUG,INFO不会被输出。
 
 ​            Logger是有继承关系的，最上层是rootLogger，定义的其他Logger都会继承rootLogger。
- 
+
   （2）Appender---定义了日志输出目的地，指定日志信息应该被输出到什么地方。输出的目的地可以是控制台、文件或网络设备。
- 
+
   （3）Layout---通过在Appender的后面附加Layout来实现格式化输出。一个Logger可以有多个Appender，每个Appender对应一个Layout。
-
-
 
 ## 2.Loggers
 
 Logger的定义格式：log4j.[loggername]=[level],appenderName,appenderName,…
 
 这里level是指Logger的优先级，appenderName是日志信息的输出地，可以同时定义多个输出地。
-
-
 
 ## 3.Appenders
 
@@ -66,34 +54,6 @@ Appender类及其作用列表
 
 （1） ConsoleAppender选项-Threshold=WARN:指定日志消息的输出最低层次。-ImmediateFlush=true:默认值是true,意谓着所有的消息都会被立即输出。-Target=System.err：默认情况下是：System.out,指定输出控制台。
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ## 4.Layouts
 
 Layout的定义格式：
@@ -112,16 +72,6 @@ Layout类及其作用列表
 | org.apache.log4j.TTCCLayout    | 包含日志产生的时间、线程、类别等等信息 |
 
 （1）HTMLLayout 选项
-
-
-
-
-
-
-
-
-
-
 
 **日志信息格式中符号所代表的含义**
 

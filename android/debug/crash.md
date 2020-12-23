@@ -14,7 +14,7 @@
 
 java层崩溃一般都是由于发生运行时异常而导致崩溃，崩溃发生的堆栈基本上都打印在日志里面了，一般只要在发生崩溃之后查看logcat日志就可以很快的定位到异常原因。
 
-还可以监听全局未捕获异常，在发生运行时异常时，可以进行一些处理，比如将崩溃日志保存起来或者上传到服务器收集，其基本实现如下：
+可以监听全局未捕获异常，使用`Thread.setDefaultUncaughtExceptionHandler()`方法监听未捕获异常，在其中获取崩溃的堆栈信息，并将其保存起来或者上传到服务器收集，其基本实现如下：
 
 ```java
 package com.reconova.visitor.core;
@@ -187,7 +187,7 @@ public class CrashHandler implements Thread.UncaughtExceptionHandler {
 }
 ```
 
-这里实现了Thread.UncaughtExceptionHandler接口，在发生未补货的异常时，都会回调到uncaughtException(Thread thread, Throwable ex)方法中，其中ex表示发生的异常信息。在这里，我们选择了将异常信息保存到文件中，以便随时取出进行分析。
+在捕获到崩溃时，还可以保存更多进程相关的信息，比如各线程堆栈、内存使用情况等等，以便开发人员定位问题
 
 ## ANR
 
@@ -430,15 +430,171 @@ DALVIK THREADS (45):
 
 当然了，简单的ANR是比较容易定位的，只要找到堆栈信息就可以直接定位到具体原因了，而复杂的anr问题就需要从多方面进行分析。 
 
+### ANR定位
+
+#### FileObserver
+
+在安卓版本为5.0以下的设备上，可以通过`FileObserver`监听`/data/anr/`来获取anr事件
+
+#### Looper
+
+[BlockCanary](https://github.com/markzhai/AndroidPerformanceMonitor)就使用Looper监控主线程卡顿问题，在Looper中有一个Printer打印日志，他在每隔Message处理前后被调用，可以使用Printer来检测是否发生ANR，`Looper.loop()`方法如下：
+
+```java
+public static void loop() {
+    // ....
+
+    for (;;) {
+        // ...
+
+        // This must be in a local variable, in case a UI event sets the logger
+        final Printer logging = me.mLogging;
+        if (logging != null) {
+            logging.println(">>>>> Dispatching to " + msg.target + " " +
+                            msg.callback + ": " + msg.what);
+        }
+
+        // ...
+        msg.target.dispatchMessage(msg);
+        // ...
+
+        if (logging != null) {
+            logging.println("<<<<< Finished to " + msg.target + " " + msg.callback);
+        }
+       // ...
+    }
+}
+```
+
+设置代码如下：
+
+```java
+public class BlockDetectByPrinter {
+    private static LogMonitor logMonitor;
+
+    public static void start() {
+        if (logMonitor == null) {
+            logMonitor = new LogMonitor();
+        }
+        Looper.getMainLooper().setMessageLogging(new Printer() {
+            //分发和处理消息开始前的log
+            private static final String START = ">>>>> Dispatching";
+            //分发和处理消息结束后的log
+            private static final String END = "<<<<< Finished";
+
+            @Override
+            public void println(String x) {
+                if (logMonitor == null) {
+                    return;
+                }
+
+                if (x.startsWith(START)) {
+                    //开始计时
+                    logMonitor.startMonitor();
+                }
+                if (x.startsWith(END)) {
+                    //结束计时，并计算出方法执行时间
+                    logMonitor.removeMonitor();
+                }
+            }
+        });
+    }
+
+    public static void stop() {
+        Looper.getMainLooper().setMessageLogging(null);
+        if (logMonitor != null) {
+            logMonitor.destroy();
+        }
+        logMonitor = null;
+    }
+}
+
+public class LogMonitor {
+    private static final String TAG = "LogMonitor";
+    private Handler mIoHandler;
+    private HandlerThread mLogThread;
+    //方法耗时的卡口,300毫秒
+    private static final long TIME_BLOCK = 100L;
+
+    public LogMonitor() {
+        mLogThread = new HandlerThread("log");
+        mLogThread.start();
+        mIoHandler = new Handler(mLogThread.getLooper());
+    }
+
+    private static Runnable mLogRunnable = new Runnable() {
+        @Override
+        public void run() {
+            //打印出执行的耗时方法的栈消息
+            StringBuilder sb = new StringBuilder();
+            StackTraceElement[] stackTrace = Looper.getMainLooper().getThread().getStackTrace();
+            for (StackTraceElement s : stackTrace) {
+                sb.append(s.toString());
+                sb.append("\n");
+            }
+            MLog.i(TAG, sb.toString());
+        }
+    };
+
+
+    /**
+     * 开始计时
+     */
+    public void startMonitor() {
+        mIoHandler.postDelayed(mLogRunnable, TIME_BLOCK);
+    }
+
+    /**
+     * 停止计时
+     */
+    public void removeMonitor() {
+        mIoHandler.removeCallbacks(mLogRunnable);
+    }
+
+    public void destroy() {
+        mLogThread.quit();
+    }
+}
+```
+
+
+
+Printer收到`>>>>> Dispatching`时就是开始处理当前消息，此时启动一个延时任务，在收到`<<<<< Finished`时就将验视人物取消，如果发生了ANR，那么在超时的时候就会调用mLogRunnable，把相关的堆栈打印出来，同时可以收集更多的调试信息。
+
+可以通过设置LogMonitor中的TIME_BLOCK来控制超时时间。
+
+这种方法有以下缺点：
+
+1. 在Printer输出之前，有一段代码queue.next()也会可能发生ANR，从而造成无法监控到ANR。
+2.  无法监控CPU资源紧张造成系统卡顿无法响应的ANR。
+
+#### ANR-WatchDog
+
+ANR-WatchDog是参考Android WatchDog机制，起了个单独线程向主线程发送一个变量+1的操作，然后休眠一定时间阈值（阈值可自定义，例如5s），休眠过后再判断变量是否已经+1，如果未完成则ANR告警。其原理如下图所示：
+
+![image](.\imgs\format,png)
+
+
+
+缺点：
+
+-  无法保证能捕获所有ANR，对阈值设置影响捕获概率。如时间过长，中间发生的ANR则可能被遗漏掉。
+
+#### 捕获SIGQUIT信号
+
+所有的Java进程都运行在Java虚拟机上，当应用发生ANR时，其最终的一个环节是向目标进程通过kill -3，发送信号SIGNAL_QUIT。Android进程收到SIGQUIT时，虚拟机会捕获这个信号，并输出相应的traces信息，保存到 `/data/anr/traces.txt` 中。
+
+因此我们可以通过`int sigaction(int __signal, const struct sigaction* __new_action, struct sigaction* __old_action);`函数注册`SIGQUIT`信号的处理程序，在信号处理中保存相应的trace信息。关于linux信号处理将在native崩溃中介绍。
+
+爱奇艺的xCrash库实现了捕获SIGQUIT来获取ANR信息功能，可以直接使用xCrash。
+
 ## native崩溃
 
 一般在发生java层崩溃时，都比较好定位问题，很快就能找到解决方案，但是在发生native崩溃时就比较棘手了。
 
-那么在发生native崩溃时有哪些方法来定位问题呢？
-
 ### tombstone
 
-一种是利用Android生成的tombstone文件来获取崩溃时的堆栈信息，从而进行分析，那么下面来介绍一下tombstone分析native崩溃。
+在有root权限的设备可以获取Android生成的tombstone文件分析，或者可以使用bugreport获取tombstone。那么下面来介绍一下tombstone分析native崩溃。
 
 下面是tombstone文件的崩溃信息：
 
@@ -555,12 +711,367 @@ D:\DJ_Software\Android\Ndk_Download\android-ndk-r10e-windows-x86_64\android-ndk-
 
 反汇编后可以直接在反汇编的文件中寻找偏移地址，进行上下文的分析，不过这样的分析需要身后的功底才好进行分析，这里其实也没有具体这样分析过，也没办法说的详细了。
 
-### Google Breakpad
+### linux signal
 
-还可以用谷歌的breakpad框架进行分析，这里推荐一篇博客：
+由于native崩溃发生在机器指令运行层面，比如app中的so库、系统so库、jvm本身等。如果这部分程序发生了错误（比如除数为零、空指针异常等），kernel就会向app中对应的线程发送相应的信号（signal），用户态进程也可以发送 signal 终止其他进程或自身。这些信号主要分为两类：
+
+**kernel信号**
+
+SIGFPE: 除数为零。
+
+SIGILL: 无法识别的 CPU 指令。
+
+SIGSYS: 无法识别的系统调用（system call）。
+
+SIGSEGV: 错误的虚拟内存地址访问。
+
+SIGBUS: 错误的物理设备地址访问。
+
+**用户态进程信号**
+
+SIGABRT: 调用 abort() / kill() / tkill() / tgkill() 自杀，或被其他进程通过 kill() / tkill() / tgkill() 他杀。
+
+**信号处理**
+
+linux进程发生错误时，其状态转换如下：
+
+![img](.\imgs\exception_status.jpg)
+
+因此我们可以在native中使用**sigaction**函数添加信号处理函数来记录发生异常时程序的各种信息，下面介绍一下**sigaction**函数：
+
+**一、函数原型：sigaction函数的功能是检查或修改与指定信号相关联的处理动作（可同时两种操作）**
+
+```c
+int sigaction(int signum, const struct sigaction *act,
+                     struct sigaction *oldact);
+```
+
+signum参数指出要捕获的信号类型，act参数指定新的信号处理方式，oldact参数输出先前信号的处理方式（如果不为NULL的话）。
+
+**二、 struct sigaction结构体介绍**
+
+```c
+struct sigaction {
+    void (*sa_handler)(int);
+    void (*sa_sigaction)(int, siginfo_t *, void *);
+    sigset_t sa_mask;
+    int sa_flags;
+    void (*sa_restorer)(void);
+}
+```
+
+- sa_handler此参数和signal()的参数handler相同，代表新的信号处理函数
+- sa_mask 用来设置在处理该信号时暂时将sa_mask 指定的信号集搁置
+- sa_flags 用来设置信号处理的其他相关操作，下列的数值可用。 
+- SA_RESETHAND：当调用信号处理函数时，将信号的处理函数重置为缺省值SIG_DFL
+- SA_RESTART：如果信号中断了进程的某个系统调用，则系统自动启动该系统调用
+- SA_NODEFER ：一般情况下， 当信号处理函数运行时，内核将阻塞该给定信号。但是如果设置了 SA_NODEFER标记， 那么在该信号处理函数运行时，内核将不会阻塞该信号
+
+由于可能有各种崩溃原因，比如栈溢出、内存耗尽、FD耗尽、Flash空间耗尽等，故在sa_handler中有许多注意事项，具体可以参考爱奇艺的xCrash，这里不再深入介绍了。
+
+## 日志保存
+
+有时在崩溃发生或者应用发生错误时，我们需要需要获取相关的日志才能深入定位问题，但是logcat日志只能保存一段时间，故需要将应用日志保存到本地，以上传到服务器，方便开发人员分析定位问题。这里有两种方式保存：
+
+#### android-log4j保存
+
+在build.gradle中添加如下依赖：
+
+```groovy
+implementation files('libs/log4j-1.2.17.jar')
+implementation files('libs/android-logging-log4j-1.0.3.jar')
+```
+
+使用MLog替代系统的Log
+
+```java
+public class MLog {
+    private static Logger logger;
+    private static final long MAX_SIZE = 1024 * 1024L;// 单个日志文件容量1M
+    private static final int MSG_MAX_LEN = 2048;// 单条日志的最大长度
+    private static final int MAX_LOG_FILE = 10;// 最多生成几个日志文件
+
+    static {
+        configLog(Environment.getExternalStorageDirectory() + "/RecoGateData/RecoLogger/Log/", "reco_log", true);
+        logger = Logger.getLogger("GateFace");
+    }
+
+    public static void v(String tag, String msg) {
+        Log.v(tag, msg);
+    }
+
+    public static void d(String tag, String msg) {
+        logger.debug(tag + ": " + subMsgIfNeed(msg));
+    }
+
+    public static void i(String tag, String msg) {
+        logger.info(tag + ": " + subMsgIfNeed(msg));
+    }
+
+    public static void w(String tag, String msg) {
+        logger.warn(tag + ": " + subMsgIfNeed(msg));
+    }
+
+    public static void w(String tag, String msg, Throwable tr) {
+        logger.warn(tag + ": " + subMsgIfNeed(msg), tr);
+    }
+
+    public static void w(String tag, Throwable tr) {
+        logger.warn(tag, tr);
+    }
+
+    public static void e(String tag, String msg) {
+        logger.error(tag + ": " + subMsgIfNeed(msg));
+    }
+
+    public static void e(String tag, String msg, Throwable tr) {
+        logger.error(tag + ": " + subMsgIfNeed(msg), tr);
+    }
+
+    private static String subMsgIfNeed(String msg) {
+        if (msg.length() > MSG_MAX_LEN) {
+            return msg.substring(0, MSG_MAX_LEN);
+        }
+        return msg;
+    }
+
+    /**
+     * 生成日志对象
+     *
+     * @param filePath 日志输出路径
+     * @param fileName 日志文件名
+     * @param flag     true:在已存在log文件后面追加 false:新log覆盖以前的log
+     */
+    public static void configLog(String filePath, String fileName, boolean flag) {
+        LogConfigurator logConfigurator = new LogConfigurator();
+        logConfigurator.setFileName(filePath + fileName + ".log");
+        logConfigurator.setRootLevel(Level.DEBUG);
+        logConfigurator.setUseFileAppender(flag);
+        logConfigurator.setLevel("org.apache", Level.ERROR);
+        logConfigurator.setFilePattern("%d{yyyy-MM-dd HH:mm:ss.SS} " + +Process.myPid() + "-%t/%p/%m%n");// 设置日志文件格式
+        logConfigurator.setMaxFileSize(MAX_SIZE);// 日志文件大小
+        logConfigurator.setMaxBackupSize(MAX_LOG_FILE);// 最多生成日志文件数量
+        logConfigurator.setImmediateFlush(true);
+        logConfigurator.configure();
+    }
+}
+```
+
+#### logcat日志保存
+
+在应用中启动一条线程执行logcat命令，并将输出的结果保存到指定目录中，其实现如下：
+
+```kotlin
+object LogcatSaver {
+    private const val TAG = "LogcatSaver"
+
+    private var process: Process? = null
+    private var stop = false
+    private var thread: Thread? = null
+
+    fun startSave(logPath: String) {
+        stopSave()
+
+        LogFileWriter.init(logPath)
+
+        Log.d(TAG, "startSave: ")
+        stop = false
+        thread {
+            val command = "logcat -v threadtime"
+            val isRoot = checkRoot()
+
+            while (!stop && !Thread.currentThread().isInterrupted) {
+                process = exec(command, isRoot)
+                process?.let { p ->
+                    var bufReader: BufferedReader? = null
+                    try {
+                        bufReader = BufferedReader(InputStreamReader(p.inputStream))
+                        var line: String?
+                        do {
+                            line = bufReader.readLine()
+                            line?.let { s ->
+                                LogFileWriter.writeLine(s)
+                            }
+                        } while (line != null)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "startSave: ", e)
+                        if (e is InterruptedException) {
+                            Thread.currentThread().interrupt()
+                        }
+                    } finally {
+                        bufReader?.close()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun stopSave() {
+        Log.d(TAG, "stopSave: ")
+        stop = true
+        thread?.interrupt()
+        process?.destroy()
+        process = null
+    }
+
+    fun saveCrashLog(crashPath: String) {
+        Log.d(TAG, "saveCrashLog: ")
+        val crashLog = File(crashPath, "crash.log")
+        if (crashLog.parentFile?.exists() == false) {
+            crashLog.parentFile?.mkdirs()
+        }
+
+        LogFileWriter.backupLog(crashLog)
+
+        val command = "logcat -v threadtime -d -f ${crashLog.absolutePath}"
+        val isRoot = checkRoot()
+
+        exec(command, isRoot)
+    }
+
+    private const val COMMAND_SU = "su"
+    private const val COMMAND_SH = "sh"
+    private const val COMMAND_EXIT = "exit\n"
+    private const val COMMAND_NEW_LINE = "\n"
+    private fun exec(command: String, isRoot: Boolean = false): Process? {
+        Log.d(TAG, "exec: $command")
+
+        var process: Process? = null
+        try {
+            process = Runtime.getRuntime().exec(if (isRoot) COMMAND_SU else COMMAND_SH)
+            val os = DataOutputStream(process?.outputStream)
+            // donnot use os.writeBytes(commmand), avoid chinese charset error
+            os.write(command.toByteArray())
+            os.writeBytes(COMMAND_NEW_LINE)
+            os.flush()
+
+            os.writeBytes(COMMAND_EXIT)
+            os.flush()
+        } catch (e: Exception) {
+            Log.e(TAG, "exec: ", e)
+        }
+
+        return process
+    }
+
+    private fun checkRoot(): Boolean {
+        val checkProcess = exec("echo root", true)
+
+        checkProcess?.let { process ->
+            val result = process.waitFor()
+
+            val errMsg = readInputStream(process.errorStream)
+            val stdMsg = readInputStream(process.inputStream)
+
+            Log.d(TAG, "checkRoot: stdMsg $stdMsg")
+            Log.e(TAG, "checkRoot: errMsg $errMsg")
+
+            return result == 0
+        }
+        return false
+    }
+
+    private fun readInputStream(inputStream: InputStream): String {
+        var bufReader: BufferedReader? = null
+        val result = StringBuilder()
+
+        try {
+            bufReader = BufferedReader(InputStreamReader(inputStream))
+            var line: String?
+            do {
+                line = bufReader.readLine()
+                if (line?.isNotEmpty() == true) {
+                    result.append(line).append("\n");
+                }
+            } while (line != null)
+        } catch (e: Exception) {
+            Log.e(TAG, "startSave: ", e)
+        } finally {
+            bufReader?.close()
+        }
+
+        return result.toString()
+    }
+}
+
+object LogFileWriter {
+    private const val TAG = "LogFileWriter"
+
+    private var logcatPath = Environment.getExternalStorageDirectory().absolutePath + "/test/log/"
+    private const val LOG_FILE = "logcat.log"
+    private const val MAX_FILE_NUM = 10 // 最多保存十个logcat日志
+    private const val MAX_FILE_SIZE = 10 * 1024 * 1024 // 每个日志文件最多保存10M
+
+    private var file: File? = null
+
+    fun init(logPath: String) {
+        logcatPath = logPath
+    }
+
+    fun writeLine(line: String) {
+        if (file == null) {
+            file = File(logcatPath + LOG_FILE)
+            file?.let { f ->
+                if (f.parentFile?.exists() == false) {
+                    f.parentFile?.mkdirs()
+                }
+            }
+        }
+
+        file?.let { f ->
+            if (f.length() >= MAX_FILE_SIZE) {
+                backupLog(f)
+            }
+
+            var bufWriter: BufferedWriter? = null
+            try {
+                bufWriter = BufferedWriter(OutputStreamWriter(FileOutputStream(f, true)))
+
+                bufWriter.write(line)
+                bufWriter.newLine()
+                bufWriter.flush()
+            } catch (e: IOException) {
+                Log.e(TAG, "writeLine: ", e)
+            } finally {
+                bufWriter?.close()
+            }
+        }
+    }
+
+     fun backupLog(logFile: File) {
+        for (i in MAX_FILE_NUM - 1 downTo 1) {
+            val bakLog = File(logFile.absolutePath + "." + i)
+            if (bakLog.exists()) {
+                val nextLog = File(logFile.absolutePath + "." + (i + 1))
+                if (nextLog.exists()) {
+                    nextLog.delete()
+                }
+                bakLog.renameTo(nextLog)
+            }
+        }
+        val firstBak = File(logFile.absolutePath + ".1")
+        logFile.renameTo(firstBak)
+    }
+}
+```
+
+将logcat日志全部保存还能再有root权限的设备中看到系统的日志，在碰上一些和系统相关的bug就可以看到系统的日志来协助定位问题了。
+
+## 第三方工具库
+
+当然了，在发生崩溃的时候往往是在用户手机或者客户现场的各种Android设备上发生的，上面说的都是开发测试过程中可以使用的手段，放到正式环境中就可能效率比较低了，因此我们可以集成一些第三方框架。
+
+### Bugly
+
+集成腾讯的Bugly框架可以自动将崩溃信息上传到bugly后台，以便开发人员分析定位问题
+
+### Breakpad
+
+Breakpad是Google提供的一个native奔溃分析工具，这里推荐一篇博客：
 
 https://www.jianshu.com/p/295ebf42b05b
 
-## 其他处理方式
+### xCrash
 
-当然了，在发生崩溃的时候往往是在用户手机或者客户现场的各种Android设备上发生的，上面说的都是开发测试过程中可以使用的手段，放到正式环境中就可能效率比较低了，因此我们可以继承一些第三方，如腾讯的bugly之类的异常处理工具。
+[xCrash](https://github.com/iqiyi/xCrash)是爱奇艺开源的进程崩溃处理工具，它能够捕获Java层和native层的崩溃时间，并在指定目录中生成一个tombstone文件。开发者可以将生成的tombstone文件上传到服务器。
+
